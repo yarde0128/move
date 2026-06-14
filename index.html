@@ -519,8 +519,10 @@
 
       configureLine(game) {
         const overshoot = Math.max(game.width, game.height) * 1.6 + 220;
+        const playerCenterX = game.player.x + game.player.width / 2;
+        const playerCenterY = game.player.y + game.player.height / 2;
         if (this.mode === 'vertical') {
-          const x = 80 + Math.random() * Math.max(1, game.width - 160);
+          const x = clamp(playerCenterX, 80, game.width - 80);
           this.x1 = x;
           this.y1 = -100;
           this.x2 = x;
@@ -530,8 +532,8 @@
 
         if (this.mode === 'horizontal') {
           const minY = 90;
-          const maxY = Math.max(minY + 1, game.groundPlatform.y - 28);
-          const y = minY + Math.random() * (maxY - minY);
+          const maxY = Math.max(minY + 1, game.height - 90);
+          const y = clamp(playerCenterY, minY, maxY);
           this.x1 = -100;
           this.y1 = y;
           this.x2 = game.width + 100;
@@ -539,19 +541,11 @@
           return;
         }
 
-        let anchorX = this.mode.endsWith('right') ? game.width + 80 : -80;
-        let anchorY = 60 + Math.random() * Math.max(1, game.height * 0.35);
-        let targetX;
-        let targetY;
-
-        if (this.mode === 'diagonal_aim_left' || this.mode === 'diagonal_aim_right') {
-          targetX = game.player.x + game.player.width / 2;
-          targetY = game.player.y + game.player.height / 2;
-          anchorY = -80;
-        } else {
-          targetX = game.width * (0.25 + Math.random() * 0.5);
-          targetY = game.height * (0.22 + Math.random() * 0.58);
-        }
+        const anchorX = this.mode.endsWith('right') ? game.width + 80 : -80;
+        const targetX = playerCenterX;
+        const targetY = playerCenterY;
+        const offset = 120 + Math.random() * Math.max(120, game.height * 0.65);
+        const anchorY = targetY + (Math.random() < 0.5 ? -offset : offset);
 
         const dx = targetX - anchorX;
         const dy = targetY - anchorY;
@@ -1388,15 +1382,13 @@
 
       chooseLaserMode() {
         const modes = [
-          { mode: 'vertical', weight: 22, family: 'axis' },
-          { mode: 'horizontal', weight: 22, family: 'axis' },
-          { mode: 'diagonal_aim_left', weight: 16, family: 'aim' },
-          { mode: 'diagonal_aim_right', weight: 16, family: 'aim' },
-          { mode: 'diagonal_random_left', weight: 12, family: 'random' },
-          { mode: 'diagonal_random_right', weight: 12, family: 'random' }
+          { mode: 'vertical', weight: 22, family: 'vertical' },
+          { mode: 'horizontal', weight: 22, family: 'horizontal' },
+          { mode: 'diagonal_random_left', weight: 28, family: 'diagonal' },
+          { mode: 'diagonal_random_right', weight: 28, family: 'diagonal' }
         ];
         let pool = modes;
-        if ((this.lastLaserFamily === 'axis' || this.lastLaserFamily === 'aim') && this.sameLaserFamilyCount >= 2) {
+        if (this.lastLaserFamily && this.sameLaserFamilyCount >= 2) {
           pool = modes.filter((entry) => entry.family !== this.lastLaserFamily);
         }
 
