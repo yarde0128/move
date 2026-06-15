@@ -12,6 +12,10 @@
       margin: 0;
       overflow: hidden;
       background: #0b0c10;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      overscroll-behavior: none;
     }
 
     canvas {
@@ -21,6 +25,9 @@
       background: #0b0c10;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
     }
   </style>
 </head>
@@ -685,9 +692,8 @@
 
         const left = game.keys.has('KeyA') || game.keys.has('ArrowLeft');
         const right = game.keys.has('KeyD') || game.keys.has('ArrowRight');
-        let direction = 0;
-        if (left && !right) direction = -1;
-        if (right && !left) direction = 1;
+        const keyboardDirection = (right ? 1 : 0) - (left ? 1 : 0);
+        const direction = Math.sign(keyboardDirection + game.touchMoveDirection);
 
         if (direction !== 0) {
           this.facing = direction;
@@ -925,6 +931,17 @@
         this.keys = new Set();
         this.jumpQueued = false;
         this.dropQueued = false;
+        this.touchMoveDirection = 0;
+        this.joystickPointerId = null;
+        this.jumpPointerId = null;
+        this.dropPointerId = null;
+        this.joystickActive = false;
+        this.jumpButtonActive = false;
+        this.dropButtonActive = false;
+        this.joystickBase = { x: 86, y: 0, radius: 56 };
+        this.joystickKnob = { x: 86, y: 0, radius: 20 };
+        this.jumpButton = { x: 0, y: 0, radius: 42 };
+        this.dropButton = { x: 0, y: 0, radius: 42 };
         this.totalDuration = 60;
         this.gameState = 'playing';
         this.overlayAlpha = 0;
@@ -1003,6 +1020,137 @@
             this.restart();
           }
         });
+
+        this.canvas.addEventListener('pointerdown', (event) => this.handlePointerDown(event), { passive: false });
+        this.canvas.addEventListener('pointermove', (event) => this.handlePointerMove(event), { passive: false });
+        this.canvas.addEventListener('pointerup', (event) => this.handlePointerEnd(event), { passive: false });
+        this.canvas.addEventListener('pointercancel', (event) => this.handlePointerEnd(event), { passive: false });
+        this.canvas.addEventListener('lostpointercapture', (event) => this.handlePointerEnd(event), { passive: false });
+        this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+      }
+
+      isTouchControlsVisible() {
+        return this.width <= 820 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+      }
+
+      getCanvasPoint(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        const scaleX = rect.width > 0 ? this.width / rect.width : 1;
+        const scaleY = rect.height > 0 ? this.height / rect.height : 1;
+        return {
+          x: (event.clientX - rect.left) * scaleX,
+          y: (event.clientY - rect.top) * scaleY
+        };
+      }
+
+      isPointInCircle(point, circle, extraRadius = 0) {
+        const dx = point.x - circle.x;
+        const dy = point.y - circle.y;
+        const radius = circle.radius + extraRadius;
+        return dx * dx + dy * dy <= radius * radius;
+      }
+
+      capturePointer(pointerId) {
+        if (!this.canvas.setPointerCapture) return;
+        try {
+          this.canvas.setPointerCapture(pointerId);
+        } catch (error) {
+          // Pointer capture can fail if the browser already released it.
+        }
+      }
+
+      handlePointerDown(event) {
+        if (this.gameState !== 'playing' || !this.isTouchControlsVisible()) return;
+
+        const point = this.getCanvasPoint(event);
+        if (this.jumpPointerId === null && this.isPointInCircle(point, this.jumpButton, 8)) {
+          event.preventDefault();
+          this.jumpPointerId = event.pointerId;
+          this.jumpButtonActive = true;
+          this.jumpQueued = true;
+          this.capturePointer(event.pointerId);
+          return;
+        }
+
+        if (this.dropPointerId === null && this.isPointInCircle(point, this.dropButton, 8)) {
+          event.preventDefault();
+          this.dropPointerId = event.pointerId;
+          this.dropButtonActive = true;
+          this.dropQueued = true;
+          this.capturePointer(event.pointerId);
+          return;
+        }
+
+        if (this.joystickPointerId === null && this.isPointInCircle(point, this.joystickBase, 24)) {
+          event.preventDefault();
+          this.joystickPointerId = event.pointerId;
+          this.joystickActive = true;
+          this.capturePointer(event.pointerId);
+          this.updateJoystickFromPoint(point);
+        }
+      }
+
+      handlePointerMove(event) {
+        if (event.pointerId === this.joystickPointerId) {
+          event.preventDefault();
+          this.updateJoystickFromPoint(this.getCanvasPoint(event));
+          return;
+        }
+
+        if (event.pointerId === this.jumpPointerId) {
+          event.preventDefault();
+          this.jumpButtonActive = this.isPointInCircle(this.getCanvasPoint(event), this.jumpButton, 12);
+          return;
+        }
+
+        if (event.pointerId === this.dropPointerId) {
+          event.preventDefault();
+          this.dropButtonActive = this.isPointInCircle(this.getCanvasPoint(event), this.dropButton, 12);
+        }
+      }
+
+      handlePointerEnd(event) {
+        if (event.pointerId === this.joystickPointerId) {
+          event.preventDefault();
+          this.resetJoystick();
+        }
+
+        if (event.pointerId === this.jumpPointerId) {
+          event.preventDefault();
+          this.jumpPointerId = null;
+          this.jumpButtonActive = false;
+        }
+
+        if (event.pointerId === this.dropPointerId) {
+          event.preventDefault();
+          this.dropPointerId = null;
+          this.dropButtonActive = false;
+        }
+      }
+
+      updateJoystickFromPoint(point) {
+        const base = this.joystickBase;
+        const clampedX = clamp(point.x - base.x, -base.radius, base.radius);
+        const deadZone = base.radius * 0.24;
+        this.joystickKnob.x = base.x + clampedX;
+        this.joystickKnob.y = base.y;
+        this.touchMoveDirection = clampedX > deadZone ? 1 : (clampedX < -deadZone ? -1 : 0);
+      }
+
+      resetJoystick() {
+        this.joystickPointerId = null;
+        this.joystickActive = false;
+        this.touchMoveDirection = 0;
+        this.joystickKnob.x = this.joystickBase.x;
+        this.joystickKnob.y = this.joystickBase.y;
+      }
+
+      resetTouchControls() {
+        this.resetJoystick();
+        this.jumpPointerId = null;
+        this.dropPointerId = null;
+        this.jumpButtonActive = false;
+        this.dropButtonActive = false;
       }
 
       resize() {
@@ -1020,6 +1168,7 @@
         this.ctx.imageSmoothingEnabled = false;
 
         this.buildLayout();
+        this.layoutTouchControls();
 
         if (this.player) {
           const xRatio = oldWidth > 0 ? this.player.x / oldWidth : 0.5;
@@ -1046,6 +1195,30 @@
         this.groundPlatform = new Platform(0, groundTop, this.width, 80, 0, false);
         this.airPlatform = new Platform(airX, airY, airWidth, airHeight, 1, true);
         this.platforms = [this.groundPlatform, this.airPlatform];
+      }
+
+      layoutTouchControls() {
+        const shortestSide = Math.min(this.width, this.height);
+        const joystickRadius = clamp(shortestSide * 0.12, 46, 60);
+        const buttonRadius = clamp(shortestSide * 0.09, 34, 46);
+        const bottomInset = Math.max(30, shortestSide * 0.045);
+
+        this.joystickBase.radius = joystickRadius;
+        this.joystickBase.x = Math.max(joystickRadius + 24, Math.min(92, this.width * 0.24));
+        this.joystickBase.y = this.height - Math.max(joystickRadius + 32, bottomInset + joystickRadius);
+        this.joystickKnob.radius = clamp(joystickRadius * 0.38, 17, 23);
+        this.joystickKnob.x = this.joystickBase.x;
+        this.joystickKnob.y = this.joystickBase.y;
+
+        const buttonX = this.width - buttonRadius - Math.max(24, shortestSide * 0.04);
+        const jumpY = this.height - buttonRadius - Math.max(28, shortestSide * 0.05);
+        this.jumpButton.radius = buttonRadius;
+        this.jumpButton.x = buttonX;
+        this.jumpButton.y = jumpY;
+
+        this.dropButton.radius = buttonRadius;
+        this.dropButton.x = buttonX;
+        this.dropButton.y = jumpY - buttonRadius * 2 - Math.max(14, shortestSide * 0.025);
       }
 
       restart() {
@@ -1083,6 +1256,7 @@
         this.heavySpawnThisFrame = false;
         this.jumpQueued = false;
         this.dropQueued = false;
+        this.resetTouchControls();
 
         this.player = new Player(this.width / 2 - 16, this.groundPlatform.y - 32);
         this.player.onGround = true;
@@ -1237,13 +1411,14 @@
       }
 
       getGroundWaveInterval(elapsedTime) {
+        const groundWaveSlowdown = 4 / 3;
         if (elapsedTime >= 50) {
-          return 1.0 + Math.random() * 0.5;
+          return (1.0 + Math.random() * 0.5) * groundWaveSlowdown;
         }
         if (elapsedTime >= 30) {
-          return 1.3 + Math.random() * 0.7;
+          return (1.3 + Math.random() * 0.7) * groundWaveSlowdown;
         }
-        return 1.8 + Math.random() * 0.7;
+        return (1.8 + Math.random() * 0.7) * groundWaveSlowdown;
       }
 
       getAirWaveInterval(elapsedTime) {
@@ -1556,6 +1731,7 @@
         this.keys.clear();
         this.jumpQueued = false;
         this.dropQueued = false;
+        this.resetTouchControls();
       }
 
       draw() {
@@ -1600,9 +1776,82 @@
 
         this.drawScreenFlash(ctx);
         this.drawHud(ctx);
+        this.drawTouchControls(ctx);
         if (this.gameState !== 'playing') {
           this.drawEndOverlay(ctx);
         }
+      }
+
+      drawTouchControls(ctx) {
+        if (this.gameState !== 'playing' || !this.isTouchControlsVisible()) return;
+
+        const base = this.joystickBase;
+        const knob = this.joystickKnob;
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '700 13px "Courier New", monospace';
+
+        ctx.globalAlpha = this.joystickActive ? 0.72 : 0.48;
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = this.joystickActive ? 16 : 8;
+        ctx.fillStyle = 'rgba(5, 8, 14, 0.72)';
+        ctx.strokeStyle = CYAN;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(base.x, base.y, base.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.42;
+        ctx.fillStyle = CYAN;
+        ctx.fillRect(base.x - base.radius * 0.66, base.y - 5, base.radius * 1.32, 10);
+        ctx.fillRect(base.x - 4, base.y - 16, 8, 32);
+
+        ctx.globalAlpha = this.joystickActive ? 0.95 : 0.7;
+        ctx.shadowColor = this.touchMoveDirection === 0 ? CYAN : NEON_PINK;
+        ctx.shadowBlur = this.joystickActive ? 14 : 8;
+        ctx.fillStyle = this.touchMoveDirection === 0 ? 'rgba(64, 248, 255, 0.82)' : 'rgba(255, 51, 102, 0.9)';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(knob.x, knob.y, knob.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        this.drawTouchButton(ctx, this.dropButton, 'DROP', this.dropButtonActive, CYAN);
+        this.drawTouchButton(ctx, this.jumpButton, 'JUMP', this.jumpButtonActive, NEON_PINK);
+
+        ctx.restore();
+      }
+
+      drawTouchButton(ctx, button, label, active, color) {
+        ctx.save();
+        ctx.globalAlpha = active ? 0.94 : 0.62;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = active ? 18 : 10;
+        ctx.fillStyle = 'rgba(5, 8, 14, 0.78)';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = active ? 3 : 2;
+        ctx.beginPath();
+        ctx.arc(button.x, button.y, button.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = active ? 0.95 : 0.52;
+        ctx.fillStyle = color;
+        const pixel = Math.max(4, Math.floor(button.radius * 0.12));
+        ctx.fillRect(button.x - pixel * 3, button.y - button.radius * 0.44, pixel * 6, pixel);
+        ctx.fillRect(button.x - pixel * 3, button.y + button.radius * 0.38, pixel * 6, pixel);
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `800 ${Math.floor(clamp(button.radius * 0.34, 12, 15))}px "Courier New", monospace`;
+        ctx.fillText(label, button.x, button.y + 1);
+        ctx.restore();
       }
 
       drawScreenFlash(ctx) {
