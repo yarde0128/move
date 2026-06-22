@@ -126,14 +126,17 @@
         this.height = height;
         this.currentLayer = currentLayer;
         this.oneWay = oneWay;
+        this.isHazardous = false;
+        this.hazardWarning = false;
       }
 
       draw(ctx) {
         ctx.save();
-        ctx.fillStyle = this.currentLayer === 0 ? '#141821' : '#131c2a';
+        const warningFlash = this.hazardWarning && Math.floor(performance.now() / 90) % 2 === 0;
+        ctx.fillStyle = this.currentLayer === 0 ? '#141821' : (this.isHazardous ? '#341224' : '#131c2a');
         ctx.fillRect(Math.floor(this.x), Math.floor(this.y), Math.floor(this.width), Math.floor(this.height));
 
-        ctx.fillStyle = this.currentLayer === 0 ? '#2bd6ff' : '#ff4f8b';
+        ctx.fillStyle = this.currentLayer === 0 ? '#2bd6ff' : (this.isHazardous || warningFlash ? NEON_PINK : '#ff4f8b');
         ctx.globalAlpha = 0.8;
         ctx.fillRect(Math.floor(this.x), Math.floor(this.y), Math.floor(this.width), 3);
 
@@ -150,6 +153,24 @@
         ctx.fillStyle = 'rgba(255,255,255,0.08)';
         for (let px = Math.floor(this.x + 4); px < this.x + this.width; px += 32) {
           ctx.fillRect(px, Math.floor(this.y + 7), 6, 2);
+        }
+
+        if (this.hazardWarning || this.isHazardous) {
+          const x = Math.floor(this.x);
+          const y = Math.floor(this.y);
+          const w = Math.floor(this.width);
+          const h = Math.floor(this.height);
+          ctx.globalAlpha = this.isHazardous ? 0.62 : (warningFlash ? 0.5 : 0.18);
+          ctx.fillStyle = NEON_PINK;
+          ctx.shadowColor = NEON_PINK;
+          ctx.shadowBlur = this.isHazardous ? 18 : 10;
+          for (let px = x + 8; px < x + w - 8; px += 22) {
+            ctx.fillRect(px, y + 6, 10, h - 10);
+          }
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = NEON_PINK;
+          ctx.lineWidth = this.isHazardous ? 3 : 2;
+          ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
         }
         ctx.restore();
       }
@@ -391,6 +412,55 @@
         ctx.globalAlpha = alpha;
         ctx.fillStyle = this.color;
         ctx.fillRect(Math.floor(this.x), Math.floor(this.y), Math.ceil(this.size), Math.ceil(this.size));
+        ctx.restore();
+      }
+    }
+
+    class RescueItem {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 24;
+        this.height = 24;
+        this.taken = false;
+        this.pulseTimer = 0;
+      }
+
+      getBounds() {
+        return {
+          x: this.x,
+          y: this.y,
+          width: this.width,
+          height: this.height
+        };
+      }
+
+      update(deltaSeconds) {
+        this.pulseTimer += deltaSeconds;
+      }
+
+      draw(ctx) {
+        const x = Math.floor(this.x);
+        const y = Math.floor(this.y);
+        const pulse = 0.65 + Math.sin(this.pulseTimer * 8) * 0.25;
+        ctx.save();
+        ctx.globalAlpha = 0.32 + pulse * 0.24;
+        ctx.shadowColor = GREEN;
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = GREEN;
+        ctx.fillRect(x - 5, y - 5, this.width + 10, this.height + 10);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#062415';
+        ctx.fillRect(x, y, this.width, this.height);
+        ctx.strokeStyle = GREEN;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, this.width, this.height);
+        ctx.fillStyle = GREEN;
+        ctx.fillRect(x + 10, y + 4, 4, 16);
+        ctx.fillRect(x + 4, y + 10, 16, 4);
+        ctx.fillStyle = CYAN;
+        ctx.fillRect(x + 3, y + 3, 5, 3);
+        ctx.fillRect(x + 16, y + 18, 5, 3);
         ctx.restore();
       }
     }
@@ -789,16 +859,19 @@
           }
         }
 
-        const airPlatform = game.airPlatform;
-        if (this.dropThroughTimer <= 0 &&
-          this.yVelocity >= 0 &&
-          previousBottom <= airPlatform.y &&
-          this.y + this.height >= airPlatform.y &&
-          horizontalOverlap(this.getRect(), airPlatform)) {
-          this.y = airPlatform.y - this.height;
-          this.yVelocity = 0;
-          this.onGround = true;
-          this.currentLayer = 1;
+        const airPlatforms = game.airPlatforms || [game.airPlatform];
+        for (const airPlatform of airPlatforms) {
+          if (this.dropThroughTimer <= 0 &&
+            this.yVelocity >= 0 &&
+            previousBottom <= airPlatform.y &&
+            this.y + this.height >= airPlatform.y &&
+            horizontalOverlap(this.getRect(), airPlatform)) {
+            this.y = airPlatform.y - this.height;
+            this.yVelocity = 0;
+            this.onGround = true;
+            this.currentLayer = 1;
+            break;
+          }
         }
 
         const ground = game.groundPlatform;
@@ -942,15 +1015,32 @@
         this.joystickKnob = { x: 86, y: 0, radius: 20 };
         this.jumpButton = { x: 0, y: 0, radius: 42 };
         this.dropButton = { x: 0, y: 0, radius: 42 };
+        this.currentStage = 1;
+        this.stageConfigs = {
+          1: { duration: 60, name: 'STAGE 1', subtitle: 'NEON BREACH' },
+          2: { duration: 45, name: 'STAGE 2', subtitle: 'CORE OVERLOAD' }
+        };
         this.totalDuration = 60;
-        this.gameState = 'playing';
+        this.gameState = 'menu';
         this.overlayAlpha = 0;
         this.replayButton = { x: 0, y: 0, width: 0, height: 0 };
+        this.menuButton = { x: 0, y: 0, width: 0, height: 0 };
+        this.nextStageButton = { x: 0, y: 0, width: 0, height: 0 };
+        this.menuButtons = [];
         this.shockwaves = [];
         this.missiles = [];
         this.lasers = [];
         this.particles = [];
         this.walls = [];
+        this.airPlatforms = [];
+        this.rescueItem = null;
+        this.rescueStatus = 'WAITING';
+        this.rescueSpawned = false;
+        this.nextHazardPlatformTime = 4.5;
+        this.hazardPlatformTimer = 0;
+        this.hazardPlatformState = 'idle';
+        this.hazardPlatforms = [];
+        this.pendingPatternLasers = [];
         this.nextGroundWaveTime = 0;
         this.nextAirWaveTime = 0;
         this.nextMissileTime = 8;
@@ -967,7 +1057,7 @@
         this.lastLaserFamily = null;
         this.sameLaserFamilyCount = 0;
         this.lastDamageTime = -999;
-        this.maxActiveShockwaves = 5;
+        this.maxActiveShockwaves = this.currentStage === 2 ? 6 : 5;
         this.maxMissiles = 4;
         this.maxLasers = 1;
         this.screenFlashTimer = 0;
@@ -980,7 +1070,7 @@
 
         this.bindEvents();
         this.resize();
-        this.restart();
+        this.showMenu();
         requestAnimationFrame((timestamp) => this.loop(timestamp));
       }
 
@@ -1009,24 +1099,60 @@
         }, { passive: false });
 
         this.canvas.addEventListener('click', (event) => {
-          if (this.gameState === 'playing') return;
           const rect = this.canvas.getBoundingClientRect();
           const x = event.clientX - rect.left;
           const y = event.clientY - rect.top;
-          if (x >= this.replayButton.x &&
-            x <= this.replayButton.x + this.replayButton.width &&
-            y >= this.replayButton.y &&
-            y <= this.replayButton.y + this.replayButton.height) {
-            this.restart();
-          }
+          this.handleUiClick(x, y);
         });
 
-        this.canvas.addEventListener('pointerdown', (event) => this.handlePointerDown(event), { passive: false });
+        this.canvas.addEventListener('pointerdown', (event) => {
+          if (this.gameState !== 'playing') {
+            event.preventDefault();
+            const point = this.getCanvasPoint(event);
+            this.handleUiClick(point.x, point.y);
+            return;
+          }
+          this.handlePointerDown(event);
+        }, { passive: false });
+
         this.canvas.addEventListener('pointermove', (event) => this.handlePointerMove(event), { passive: false });
         this.canvas.addEventListener('pointerup', (event) => this.handlePointerEnd(event), { passive: false });
         this.canvas.addEventListener('pointercancel', (event) => this.handlePointerEnd(event), { passive: false });
         this.canvas.addEventListener('lostpointercapture', (event) => this.handlePointerEnd(event), { passive: false });
         this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+      }
+
+      isPointInRect(point, rect) {
+        return point.x >= rect.x &&
+          point.x <= rect.x + rect.width &&
+          point.y >= rect.y &&
+          point.y <= rect.y + rect.height;
+      }
+
+      handleUiClick(x, y) {
+        const point = { x, y };
+        if (this.gameState === 'menu') {
+          for (const button of this.menuButtons) {
+            if (this.isPointInRect(point, button)) {
+              this.restart(button.stage);
+              return;
+            }
+          }
+        }
+
+        if (this.gameState === 'victory' || this.gameState === 'defeated') {
+          if (this.isPointInRect(point, this.replayButton)) {
+            this.restart(this.currentStage);
+            return;
+          }
+          if (this.isPointInRect(point, this.menuButton)) {
+            this.showMenu();
+            return;
+          }
+          if (this.gameState === 'victory' && this.currentStage === 1 && this.isPointInRect(point, this.nextStageButton)) {
+            this.restart(2);
+          }
+        }
       }
 
       isTouchControlsVisible() {
@@ -1168,6 +1294,12 @@
         this.ctx.imageSmoothingEnabled = false;
 
         this.buildLayout();
+        if (this.currentStage === 2 && this.gameState === 'playing') {
+          this.clearPlatformHazards();
+          this.hazardPlatformState = 'idle';
+          this.hazardPlatformTimer = 0;
+          this.nextHazardPlatformTime = (this.elapsedTime || 0) + 1.5;
+        }
         this.layoutTouchControls();
 
         if (this.player) {
@@ -1186,15 +1318,30 @@
 
       buildLayout() {
         const groundTop = this.height - 80;
-        const airWidth = clamp(this.width * 0.45, Math.min(210, this.width - 60), this.width - 60);
         const airHeight = 24;
-        const airX = (this.width - airWidth) / 2;
         const reachableGap = clamp(this.height * 0.22, 145, 170);
         const airY = clamp(groundTop - reachableGap, Math.max(120, this.height * 0.42), groundTop - 96);
 
         this.groundPlatform = new Platform(0, groundTop, this.width, 80, 0, false);
-        this.airPlatform = new Platform(airX, airY, airWidth, airHeight, 1, true);
-        this.platforms = [this.groundPlatform, this.airPlatform];
+        if (this.currentStage === 2) {
+          const segmentWidth = clamp(this.width * 0.18, 72, 150);
+          const gap = clamp(this.width * 0.06, 24, 62);
+          const totalWidth = segmentWidth * 3 + gap * 2;
+          const startX = (this.width - totalWidth) / 2;
+          this.airPlatforms = [
+            new Platform(startX, airY, segmentWidth, airHeight, 1, true),
+            new Platform(startX + segmentWidth + gap, airY, segmentWidth, airHeight, 1, true),
+            new Platform(startX + (segmentWidth + gap) * 2, airY, segmentWidth, airHeight, 1, true)
+          ];
+          this.airPlatform = this.airPlatforms[1];
+          this.platforms = [this.groundPlatform, ...this.airPlatforms];
+        } else {
+          const airWidth = clamp(this.width * 0.45, Math.min(210, this.width - 60), this.width - 60);
+          const airX = (this.width - airWidth) / 2;
+          this.airPlatform = new Platform(airX, airY, airWidth, airHeight, 1, true);
+          this.airPlatforms = [this.airPlatform];
+          this.platforms = [this.groundPlatform, this.airPlatform];
+        }
       }
 
       layoutTouchControls() {
@@ -1221,14 +1368,47 @@
         this.dropButton.y = jumpY - buttonRadius * 2 - Math.max(14, shortestSide * 0.025);
       }
 
-      restart() {
+      clearPlatformHazards() {
+        for (const platform of this.airPlatforms || []) {
+          platform.isHazardous = false;
+          platform.hazardWarning = false;
+        }
+        this.hazardPlatforms = [];
+      }
+
+      showMenu() {
+        this.gameState = 'menu';
+        this.overlayAlpha = 1;
+        this.player = null;
+        this.keys.clear();
+        this.jumpQueued = false;
+        this.dropQueued = false;
+        this.resetTouchControls();
+        this.shockwaves = [];
+        this.missiles = [];
+        this.lasers = [];
+        this.particles = [];
+        this.pendingPatternLasers = [];
+        this.rescueItem = null;
+        this.rescueStatus = 'WAITING';
+        this.rescueSpawned = false;
+        this.currentLaserMode = 'NONE';
+        this.clearPlatformHazards();
+      }
+
+      restart(stage = this.currentStage) {
+        this.currentStage = stage;
+        const config = this.stageConfigs[this.currentStage] || this.stageConfigs[1];
+        this.totalDuration = config.duration;
+        this.buildLayout();
+        this.layoutTouchControls();
         this.startTime = performance.now();
         this.elapsedTime = 0;
         this.finalTime = 0;
         this.nextGroundWaveTime = 0;
         this.nextAirWaveTime = 0;
-        this.nextMissileTime = 8;
-        this.nextLaserTime = 10;
+        this.nextMissileTime = this.currentStage === 2 ? 6 : 8;
+        this.nextLaserTime = this.currentStage === 2 ? 2 : 10;
         this.lastGroundSide = null;
         this.lastAirSide = null;
         this.sameGroundSideCount = 0;
@@ -1250,6 +1430,15 @@
         this.missiles = [];
         this.lasers = [];
         this.particles = [];
+        this.pendingPatternLasers = [];
+        this.rescueItem = null;
+        this.rescueStatus = this.currentStage === 2 ? '25s' : 'NONE';
+        this.rescueSpawned = false;
+        this.nextHazardPlatformTime = 4.5;
+        this.hazardPlatformTimer = 0;
+        this.hazardPlatformState = 'idle';
+        this.hazardPlatforms = [];
+        this.clearPlatformHazards();
         this.shakeTime = 0;
         this.shakePower = 0;
         this.screenFlashTimer = 0;
@@ -1298,11 +1487,14 @@
           this.screenFlashTimer = Math.max(0, this.screenFlashTimer - deltaSeconds);
         }
 
+        this.updateStageTwoSystems(deltaSeconds);
         this.player.update(this, frameScale, deltaSeconds);
+        this.checkHazardPlatformBounce();
         this.heavySpawnThisFrame = false;
         this.updateSpawning();
         this.updateMissileSpawning();
         this.updateLaserSpawning();
+        this.updatePendingPatternLasers();
 
         for (const shockwave of this.shockwaves) {
           shockwave.update(deltaSeconds);
@@ -1332,6 +1524,9 @@
         for (const particle of this.particles) {
           particle.update(deltaSeconds);
         }
+        if (this.rescueItem) {
+          this.rescueItem.update(deltaSeconds);
+        }
 
         this.shockwaves = this.shockwaves.filter((shockwave) => !shockwave.done);
         this.checkMissileWallHits();
@@ -1341,6 +1536,7 @@
           this.currentLaserMode = 'NONE';
         }
         this.particles = this.particles.filter((particle) => !particle.done).slice(-220);
+        this.checkRescueItemPickup();
         this.checkShockwaveHits();
         this.checkMissileHits();
         this.checkLaserHits();
@@ -1348,6 +1544,141 @@
 
       clearObstacles() {
         this.walls = [];
+      }
+
+      updateStageTwoSystems(deltaSeconds) {
+        if (this.currentStage !== 2) return;
+        this.updateHazardPlatforms(deltaSeconds);
+        this.updateRescueSpawn();
+      }
+
+      updateHazardPlatforms(deltaSeconds) {
+        if (this.hazardPlatformState === 'idle') {
+          if (this.elapsedTime >= this.nextHazardPlatformTime) {
+            this.startHazardPlatformWarning();
+          }
+          return;
+        }
+
+        this.hazardPlatformTimer -= deltaSeconds;
+        if (this.hazardPlatformTimer > 0) return;
+
+        if (this.hazardPlatformState === 'warning') {
+          for (const platform of this.hazardPlatforms) {
+            platform.hazardWarning = false;
+            platform.isHazardous = true;
+          }
+          this.hazardPlatformState = 'active';
+          this.hazardPlatformTimer = 2.2;
+          return;
+        }
+
+        if (this.hazardPlatformState === 'active') {
+          this.clearPlatformHazards();
+          this.hazardPlatformState = 'idle';
+          this.nextHazardPlatformTime = this.elapsedTime + 4.5 + Math.random() * 0.6;
+        }
+      }
+
+      startHazardPlatformWarning() {
+        this.clearPlatformHazards();
+        const platforms = [...this.airPlatforms];
+        while (platforms.length > 2) {
+          platforms.splice(Math.floor(Math.random() * platforms.length), 1);
+        }
+        this.hazardPlatforms = platforms;
+        for (const platform of this.hazardPlatforms) {
+          platform.hazardWarning = true;
+        }
+        this.hazardPlatformState = 'warning';
+        this.hazardPlatformTimer = 0.8;
+      }
+
+      checkHazardPlatformBounce() {
+        if (this.currentStage !== 2 || !this.player.onGround || this.player.currentLayer !== 1) return;
+        const playerRect = this.player.getBounds();
+        for (const platform of this.airPlatforms) {
+          if (!platform.isHazardous) continue;
+          const standingOnPlatform = Math.abs(this.player.y + this.player.height - platform.y) <= 3 &&
+            horizontalOverlap(playerRect, platform);
+          if (!standingOnPlatform) continue;
+          this.player.currentLayer = 0;
+          this.player.dropThroughTimer = 0.32;
+          this.player.onGround = false;
+          this.player.yVelocity = Math.max(this.player.yVelocity, 5.2);
+          this.player.y += 4;
+          this.spawnHazardSparks(platform);
+          break;
+        }
+      }
+
+      spawnHazardSparks(platform) {
+        const centerY = platform.y + 5;
+        for (let i = 0; i < 14; i += 1) {
+          this.spawnParticle(
+            platform.x + Math.random() * platform.width,
+            centerY,
+            (Math.random() - 0.5) * 170,
+            -40 - Math.random() * 100,
+            2 + Math.random() * 3,
+            Math.random() < 0.72 ? NEON_PINK : CYAN,
+            0.24 + Math.random() * 0.2
+          );
+        }
+      }
+
+      updateRescueSpawn() {
+        if (this.rescueSpawned) {
+          if (this.rescueStatus !== 'TAKEN' && this.rescueItem) {
+            this.rescueStatus = 'READY';
+          }
+          return;
+        }
+
+        const remaining = 25 - this.elapsedTime;
+        if (remaining > 0) {
+          this.rescueStatus = `${Math.ceil(remaining)}s`;
+          return;
+        }
+
+        this.spawnRescueItem();
+      }
+
+      spawnRescueItem() {
+        const safePlatforms = this.airPlatforms.filter((platform) => !platform.isHazardous && !platform.hazardWarning);
+        if (safePlatforms.length > 0) {
+          const platform = safePlatforms[Math.floor(Math.random() * safePlatforms.length)];
+          this.rescueItem = new RescueItem(platform.x + platform.width / 2 - 12, platform.y - 34);
+        } else {
+          const x = clamp(this.width * (0.42 + Math.random() * 0.16), 40, this.width - 64);
+          this.rescueItem = new RescueItem(x, this.groundPlatform.y - 58);
+        }
+        this.rescueSpawned = true;
+        this.rescueStatus = 'READY';
+      }
+
+      checkRescueItemPickup() {
+        if (!this.rescueItem || this.rescueItem.taken) return;
+        if (!rectsOverlap(this.player.getBounds(), this.rescueItem.getBounds())) return;
+        this.rescueItem.taken = true;
+        this.player.currentHP = Math.min(this.player.maxHP, this.player.currentHP + 1);
+        this.rescueStatus = 'TAKEN';
+        const centerX = this.rescueItem.x + this.rescueItem.width / 2;
+        const centerY = this.rescueItem.y + this.rescueItem.height / 2;
+        for (let i = 0; i < 24; i += 1) {
+          const angle = Math.random() * Math.PI * 2;
+          const speed = 50 + Math.random() * 130;
+          this.spawnParticle(
+            centerX,
+            centerY,
+            Math.cos(angle) * speed,
+            Math.sin(angle) * speed,
+            2 + Math.random() * 3,
+            Math.random() < 0.6 ? GREEN : CYAN,
+            0.3 + Math.random() * 0.28
+          );
+        }
+        this.rescueItem = null;
       }
 
       updateSpawning() {
@@ -1411,6 +1742,12 @@
       }
 
       getGroundWaveInterval(elapsedTime) {
+        if (this.currentStage === 2) {
+          if (elapsedTime >= 25) {
+            return 0.95 + Math.random() * 0.4;
+          }
+          return 1.25 + Math.random() * 0.5;
+        }
         const groundWaveSlowdown = 4 / 3;
         if (elapsedTime >= 50) {
           return (1.0 + Math.random() * 0.5) * groundWaveSlowdown;
@@ -1422,6 +1759,12 @@
       }
 
       getAirWaveInterval(elapsedTime) {
+        if (this.currentStage === 2) {
+          if (elapsedTime >= 25) {
+            return 1.05 + Math.random() * 0.45;
+          }
+          return 1.35 + Math.random() * 0.55;
+        }
         if (elapsedTime >= 50) {
           return 1.1 + Math.random() * 0.5;
         }
@@ -1462,7 +1805,8 @@
       }
 
       updateMissileSpawning() {
-        if (this.elapsedTime < 8 || this.elapsedTime < this.nextMissileTime) return;
+        const missileStartTime = this.currentStage === 2 ? 6 : 8;
+        if (this.elapsedTime < missileStartTime || this.elapsedTime < this.nextMissileTime) return;
         if (this.elapsedTime - this.lastDamageTime < 1) {
           this.nextMissileTime = this.elapsedTime + 0.6;
           return;
@@ -1478,7 +1822,7 @@
           return;
         }
 
-        const canDouble = this.elapsedTime >= 50 && activeCount <= this.maxMissiles - 2 && Math.random() < 0.24;
+        const canDouble = this.currentStage !== 2 && this.elapsedTime >= 50 && activeCount <= this.maxMissiles - 2 && Math.random() < 0.24;
         this.spawnMissile();
         if (canDouble) {
           this.spawnMissile();
@@ -1488,7 +1832,8 @@
       }
 
       updateLaserSpawning() {
-        if (this.elapsedTime < 10 || this.elapsedTime < this.nextLaserTime) return;
+        const laserStartTime = this.currentStage === 2 ? 2 : 10;
+        if (this.elapsedTime < laserStartTime || this.elapsedTime < this.nextLaserTime) return;
         if (this.elapsedTime - this.lastDamageTime < 1) {
           this.nextLaserTime = this.elapsedTime + 0.75;
           return;
@@ -1505,10 +1850,37 @@
           this.nextLaserTime = this.elapsedTime + 0.6;
           return;
         }
+        if (this.currentStage === 2 && this.pendingPatternLasers.length > 0) {
+          this.nextLaserTime = this.elapsedTime + 0.5;
+          return;
+        }
 
-        this.spawnLaser();
+        if (this.currentStage === 2) {
+          this.scheduleLaserPattern();
+        } else {
+          this.spawnLaser();
+        }
         this.lastLaserSpawnTime = this.elapsedTime;
         this.nextLaserTime = this.elapsedTime + this.getLaserInterval(this.elapsedTime);
+      }
+
+      scheduleLaserPattern() {
+        this.pendingPatternLasers.push({ fireTime: this.elapsedTime, mode: this.chooseLaserMode() });
+        this.pendingPatternLasers.push({ fireTime: this.elapsedTime + 0.55, mode: this.chooseLaserMode() });
+      }
+
+      updatePendingPatternLasers() {
+        if (this.pendingPatternLasers.length === 0) return;
+        this.pendingPatternLasers.sort((a, b) => a.fireTime - b.fireTime);
+        const nextLaser = this.pendingPatternLasers[0];
+        if (this.elapsedTime < nextLaser.fireTime) return;
+        if (this.elapsedTime - this.lastDamageTime < 1) {
+          nextLaser.fireTime = this.elapsedTime + 0.4;
+          return;
+        }
+        if (this.lasers.length >= this.maxLasers) return;
+        this.spawnLaser(nextLaser.mode);
+        this.pendingPatternLasers.shift();
       }
 
       isHeavyAttackMoment() {
@@ -1518,6 +1890,12 @@
       }
 
       getMissileInterval(elapsedTime) {
+        if (this.currentStage === 2) {
+          if (elapsedTime >= 30) {
+            return 2.6 + Math.random() * 0.8;
+          }
+          return 3.2 + Math.random() * 1.2;
+        }
         if (elapsedTime >= 50) {
           return 2.4 + Math.random() * 1.2;
         }
@@ -1528,6 +1906,12 @@
       }
 
       getLaserInterval(elapsedTime) {
+        if (this.currentStage === 2) {
+          if (elapsedTime >= 20) {
+            return 3.2 + Math.random() * 1.0;
+          }
+          return 4.2 + Math.random() * 1.2;
+        }
         if (elapsedTime >= 40) {
           return 3.8 + Math.random() * 1.7;
         }
@@ -1587,8 +1971,8 @@
         return chosen.mode;
       }
 
-      spawnLaser() {
-        const mode = this.chooseLaserMode();
+      spawnLaser(forcedMode = null) {
+        const mode = forcedMode || this.chooseLaserMode();
         this.currentLaserMode = mode;
         this.lasers.push(new CyberLaser(mode, this));
       }
@@ -1771,13 +2155,22 @@
         for (const particle of this.particles) {
           particle.draw(ctx);
         }
-        this.player.draw(ctx);
+        if (this.rescueItem) {
+          this.rescueItem.draw(ctx);
+        }
+        if (this.player) {
+          this.player.draw(ctx);
+        }
         ctx.restore();
 
         this.drawScreenFlash(ctx);
-        this.drawHud(ctx);
+        if (this.gameState !== 'menu' && this.player) {
+          this.drawHud(ctx);
+        }
         this.drawTouchControls(ctx);
-        if (this.gameState !== 'playing') {
+        if (this.gameState === 'menu') {
+          this.drawStageMenu(ctx);
+        } else if (this.gameState !== 'playing') {
           this.drawEndOverlay(ctx);
         }
       }
@@ -1883,7 +2276,7 @@
       }
 
       drawCountdown(ctx) {
-        const remaining = Math.max(0, Math.ceil(this.totalDuration - this.elapsedTime));
+        const remaining = Math.max(0, Math.ceil(this.totalDuration - (this.elapsedTime || 0)));
         ctx.save();
         ctx.globalAlpha = 0.05;
         ctx.fillStyle = '#ffffff';
@@ -1898,13 +2291,83 @@
         return String(mode || 'NONE').replace(/_/g, ' ').toUpperCase();
       }
 
+      drawMenuButton(ctx, rect, label, color) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(5, 8, 14, 0.78)';
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 14;
+        ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `800 ${Math.floor(clamp(rect.width * 0.14, 15, 22))}px "Courier New", monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, rect.x + rect.width / 2, rect.y + rect.height / 2 + 1);
+        ctx.restore();
+      }
+
+      drawStageMenu(ctx) {
+        ctx.save();
+        ctx.globalAlpha = 0.86;
+        ctx.fillStyle = '#05070c';
+        ctx.fillRect(0, 0, this.width, this.height);
+
+        const centerX = this.width / 2;
+        const centerY = this.height / 2;
+        ctx.globalAlpha = 1;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = CYAN;
+        ctx.font = `900 ${clamp(this.width * 0.07, 34, 72)}px "Courier New", monospace`;
+        ctx.fillText('NEON DODGE', centerX, centerY - 150);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(255,255,255,0.82)';
+        ctx.font = '18px "Courier New", monospace';
+        ctx.fillText('SELECT STAGE', centerX, centerY - 102);
+
+        const buttonWidth = clamp(this.width * 0.34, 180, 260);
+        const buttonHeight = 58;
+        const gap = 22;
+        this.menuButtons = [
+          {
+            stage: 1,
+            x: centerX - buttonWidth / 2,
+            y: centerY - buttonHeight - gap / 2,
+            width: buttonWidth,
+            height: buttonHeight
+          },
+          {
+            stage: 2,
+            x: centerX - buttonWidth / 2,
+            y: centerY + gap / 2,
+            width: buttonWidth,
+            height: buttonHeight
+          }
+        ];
+
+        this.drawMenuButton(ctx, this.menuButtons[0], 'STAGE 1', CYAN);
+        this.drawMenuButton(ctx, this.menuButtons[1], 'STAGE 2', NEON_PINK);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.62)';
+        ctx.font = '14px "Courier New", monospace';
+        ctx.fillText('STAGE 2: 45s / THREE PLATFORMS / LASER PATTERNS', centerX, centerY + 116);
+        ctx.restore();
+      }
+
       drawHud(ctx) {
         const remaining = Math.max(0, this.totalDuration - this.elapsedTime);
         const groundNext = Math.max(0, this.nextGroundWaveTime - this.elapsedTime);
         const airNext = Math.max(0, this.nextAirWaveTime - this.elapsedTime);
         const dangerLevel = Math.min(5, 1 + Math.floor(this.elapsedTime / 12));
+        const stageTitle = this.currentStage === 2 ? 'STAGE 2 CORE OVERLOAD' : 'STAGE 1 NEON BREACH';
         const hpText = `${'HP '.padEnd(4, ' ')}${'[]'.repeat(this.player.currentHP)}${'..'.repeat(this.player.maxHP - this.player.currentHP)}`;
         const lines = [
+          stageTitle,
           hpText,
           `SURVIVED ${this.elapsedTime.toFixed(1)}s`,
           `REMAIN   ${remaining.toFixed(1)}s`,
@@ -1914,22 +2377,23 @@
           `MISSILES: ${this.missiles.length}`,
           `LASERS:   ${this.lasers.length}`,
           `LASER MODE: ${this.formatLaserMode(this.currentLaserMode)}`,
+          this.currentStage === 2 ? `RESCUE: ${this.rescueStatus}` : null,
           `DANGER LEVEL: ${dangerLevel}`,
           'A/D OR ARROWS MOVE',
           'W/SPACE JUMP  S/DOWN DROP'
-        ];
+        ].filter(Boolean);
 
         ctx.save();
         ctx.font = '16px "Courier New", monospace';
         ctx.textBaseline = 'top';
         ctx.fillStyle = 'rgba(5, 8, 14, 0.72)';
-        ctx.fillRect(18, 18, 342, 254);
+        ctx.fillRect(18, 18, 360, 20 + lines.length * 20);
         ctx.strokeStyle = 'rgba(64,248,255,0.75)';
         ctx.lineWidth = 2;
-        ctx.strokeRect(18, 18, 342, 254);
+        ctx.strokeRect(18, 18, 360, 20 + lines.length * 20);
 
         for (let i = 0; i < lines.length; i += 1) {
-          ctx.fillStyle = i === 0 ? YELLOW : (i < 10 ? CYAN : 'rgba(255,255,255,0.8)');
+          ctx.fillStyle = i === 1 ? YELLOW : (i < 11 ? CYAN : 'rgba(255,255,255,0.8)');
           ctx.fillText(lines[i], 30, 30 + i * 20);
         }
         ctx.restore();
@@ -1958,27 +2422,40 @@
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#ffffff';
         ctx.font = '20px "Courier New", monospace';
-        ctx.fillText(`FINAL TIME ${this.finalTime.toFixed(1)}s`, centerX, centerY - 16);
+        ctx.fillText(`${this.stageConfigs[this.currentStage].name}  FINAL TIME ${this.finalTime.toFixed(1)}s`, centerX, centerY - 16);
 
-        const buttonWidth = 180;
+        const hasNextStage = this.gameState === 'victory' && this.currentStage === 1;
+        const totalButtons = hasNextStage ? 3 : 2;
+        const gap = 16;
+        const buttonWidth = clamp((this.width - 56 - gap * (totalButtons - 1)) / totalButtons, 104, 180);
         const buttonHeight = 54;
-        const buttonX = centerX - buttonWidth / 2;
+        const totalWidth = buttonWidth * totalButtons + gap * (totalButtons - 1);
+        const startX = centerX - totalWidth / 2;
         const buttonY = centerY + 34;
         this.replayButton = {
-          x: buttonX,
+          x: startX,
+          y: buttonY,
+          width: buttonWidth,
+          height: buttonHeight
+        };
+        this.menuButton = {
+          x: startX + buttonWidth + gap,
+          y: buttonY,
+          width: buttonWidth,
+          height: buttonHeight
+        };
+        this.nextStageButton = {
+          x: hasNextStage ? startX + (buttonWidth + gap) * 2 : -9999,
           y: buttonY,
           width: buttonWidth,
           height: buttonHeight
         };
 
-        ctx.fillStyle = 'rgba(255,51,102,0.18)';
-        ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
-        ctx.strokeStyle = NEON_PINK;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '700 24px "Courier New", monospace';
-        ctx.fillText('REPLAY', centerX, buttonY + buttonHeight / 2 + 1);
+        this.drawMenuButton(ctx, this.replayButton, 'REPLAY', NEON_PINK);
+        this.drawMenuButton(ctx, this.menuButton, 'MENU', CYAN);
+        if (hasNextStage) {
+          this.drawMenuButton(ctx, this.nextStageButton, 'NEXT', GREEN);
+        }
         ctx.restore();
       }
     }
