@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
   <title>Neon Shockwave Dodge</title>
   <style>
     html,
@@ -12,6 +12,8 @@
       margin: 0;
       overflow: hidden;
       background: #0b0c10;
+      position: fixed;
+      inset: 0;
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
@@ -20,8 +22,10 @@
 
     canvas {
       display: block;
-      width: 100vw;
-      height: 100vh;
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       background: #0b0c10;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
@@ -1076,6 +1080,10 @@
 
       bindEvents() {
         window.addEventListener('resize', () => this.resize());
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', () => this.resize());
+          window.visualViewport.addEventListener('scroll', () => this.resize());
+        }
         window.addEventListener('keydown', (event) => {
           if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.code)) {
             event.preventDefault();
@@ -1279,17 +1287,28 @@
         this.dropButtonActive = false;
       }
 
+      getViewportSize() {
+        const visualViewport = window.visualViewport;
+        const width = visualViewport ? visualViewport.width : window.innerWidth;
+        const height = visualViewport ? visualViewport.height : window.innerHeight;
+        return {
+          width: Math.max(320, Math.floor(width || window.innerWidth || 320)),
+          height: Math.max(320, Math.floor(height || window.innerHeight || 320))
+        };
+      }
+
       resize() {
-        const oldWidth = this.width || window.innerWidth;
-        const oldHeight = this.height || window.innerHeight;
+        const viewport = this.getViewportSize();
+        const oldWidth = this.width || viewport.width;
+        const oldHeight = this.height || viewport.height;
         const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
 
-        this.width = Math.max(320, window.innerWidth);
-        this.height = Math.max(320, window.innerHeight);
+        this.width = viewport.width;
+        this.height = viewport.height;
         this.canvas.width = Math.floor(this.width * dpr);
         this.canvas.height = Math.floor(this.height * dpr);
-        this.canvas.style.width = '100vw';
-        this.canvas.style.height = '100vh';
+        this.canvas.style.width = `${this.width}px`;
+        this.canvas.style.height = `${this.height}px`;
         this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         this.ctx.imageSmoothingEnabled = false;
 
@@ -1346,26 +1365,31 @@
 
       layoutTouchControls() {
         const shortestSide = Math.min(this.width, this.height);
+        const isLandscape = this.width > this.height;
+        const safeInset = Math.max(24, shortestSide * 0.045);
         const joystickRadius = clamp(shortestSide * 0.12, 46, 60);
         const buttonRadius = clamp(shortestSide * 0.09, 34, 46);
-        const bottomInset = Math.max(30, shortestSide * 0.045);
+        const bottomInset = isLandscape ? safeInset : Math.max(28, shortestSide * 0.045);
 
         this.joystickBase.radius = joystickRadius;
-        this.joystickBase.x = Math.max(joystickRadius + 24, Math.min(92, this.width * 0.24));
-        this.joystickBase.y = this.height - Math.max(joystickRadius + 32, bottomInset + joystickRadius);
+        this.joystickBase.x = isLandscape ?
+          safeInset + joystickRadius + 18 :
+          Math.max(joystickRadius + 24, Math.min(92, this.width * 0.24));
+        this.joystickBase.y = this.height - bottomInset - joystickRadius - (isLandscape ? 8 : 20);
         this.joystickKnob.radius = clamp(joystickRadius * 0.38, 17, 23);
         this.joystickKnob.x = this.joystickBase.x;
         this.joystickKnob.y = this.joystickBase.y;
 
-        const buttonX = this.width - buttonRadius - Math.max(24, shortestSide * 0.04);
-        const jumpY = this.height - buttonRadius - Math.max(28, shortestSide * 0.05);
+        const buttonX = this.width - buttonRadius - safeInset - (isLandscape ? 10 : 0);
+        const jumpY = this.height - buttonRadius - bottomInset - (isLandscape ? 8 : 0);
+        const dropY = jumpY - buttonRadius * 2 - Math.max(isLandscape ? 12 : 14, shortestSide * 0.025);
         this.jumpButton.radius = buttonRadius;
         this.jumpButton.x = buttonX;
         this.jumpButton.y = jumpY;
 
         this.dropButton.radius = buttonRadius;
         this.dropButton.x = buttonX;
-        this.dropButton.y = jumpY - buttonRadius * 2 - Math.max(14, shortestSide * 0.025);
+        this.dropButton.y = dropY;
       }
 
       clearPlatformHazards() {
@@ -2330,8 +2354,8 @@
         ctx.font = '18px "Courier New", monospace';
         ctx.fillText('SELECT STAGE', centerX, centerY - 102);
 
-        const buttonWidth = clamp(this.width * 0.34, 180, 260);
-        const buttonHeight = 58;
+        const buttonWidth = clamp(this.width * 0.34, this.width > this.height ? 150 : 180, this.width > this.height ? 220 : 260);
+        const buttonHeight = this.width > this.height && this.height < 430 ? 48 : 58;
         const gap = 22;
         this.menuButtons = [
           {
@@ -2354,7 +2378,7 @@
         this.drawMenuButton(ctx, this.menuButtons[1], 'STAGE 2', NEON_PINK);
 
         ctx.fillStyle = 'rgba(255,255,255,0.62)';
-        ctx.font = '14px "Courier New", monospace';
+        ctx.font = `${this.width > this.height && this.height < 430 ? 12 : 14}px "Courier New", monospace`;
         ctx.fillText('STAGE 2: 45s / THREE PLATFORMS / LASER PATTERNS', centerX, centerY + 116);
         ctx.restore();
       }
@@ -2383,18 +2407,24 @@
           'W/SPACE JUMP  S/DOWN DROP'
         ].filter(Boolean);
 
+        const isCompactLandscape = this.width > this.height && this.height < 460;
+        const hudFontSize = isCompactLandscape ? 13 : 16;
+        const lineHeight = isCompactLandscape ? 16 : 20;
+        const panelWidth = isCompactLandscape ? 314 : 360;
+        const panelHeight = 20 + lines.length * lineHeight;
+
         ctx.save();
-        ctx.font = '16px "Courier New", monospace';
+        ctx.font = `${hudFontSize}px "Courier New", monospace`;
         ctx.textBaseline = 'top';
         ctx.fillStyle = 'rgba(5, 8, 14, 0.72)';
-        ctx.fillRect(18, 18, 360, 20 + lines.length * 20);
+        ctx.fillRect(18, 18, panelWidth, panelHeight);
         ctx.strokeStyle = 'rgba(64,248,255,0.75)';
         ctx.lineWidth = 2;
-        ctx.strokeRect(18, 18, 360, 20 + lines.length * 20);
+        ctx.strokeRect(18, 18, panelWidth, panelHeight);
 
         for (let i = 0; i < lines.length; i += 1) {
           ctx.fillStyle = i === 1 ? YELLOW : (i < 11 ? CYAN : 'rgba(255,255,255,0.8)');
-          ctx.fillText(lines[i], 30, 30 + i * 20);
+          ctx.fillText(lines[i], 30, 30 + i * lineHeight);
         }
         ctx.restore();
       }
@@ -2426,12 +2456,13 @@
 
         const hasNextStage = this.gameState === 'victory' && this.currentStage === 1;
         const totalButtons = hasNextStage ? 3 : 2;
-        const gap = 16;
-        const buttonWidth = clamp((this.width - 56 - gap * (totalButtons - 1)) / totalButtons, 104, 180);
-        const buttonHeight = 54;
+        const isCompactLandscape = this.width > this.height && this.height < 430;
+        const gap = isCompactLandscape ? 10 : 16;
+        const buttonWidth = clamp((this.width - 56 - gap * (totalButtons - 1)) / totalButtons, isCompactLandscape ? 86 : 104, isCompactLandscape ? 150 : 180);
+        const buttonHeight = isCompactLandscape ? 44 : 54;
         const totalWidth = buttonWidth * totalButtons + gap * (totalButtons - 1);
         const startX = centerX - totalWidth / 2;
-        const buttonY = centerY + 34;
+        const buttonY = centerY + (isCompactLandscape ? 24 : 34);
         this.replayButton = {
           x: startX,
           y: buttonY,
